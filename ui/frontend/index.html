@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<script>
+// Forwards physical keys to Python. Digits and operators type into the
+// expression. Enter calculates, Escape clears, Backspace deletes.
+(function () {
+  var allowed = {};
+  var events = [];
+  var counter = 0;
+  var lastCopy = 0;
+
+  function post(type, payload) {
+    var msg = { isStreamlitMessage: true, type: type };
+    for (var k in payload) { msg[k] = payload[k]; }
+    window.parent.postMessage(msg, "*");
+  }
+
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.type !== "streamlit:render") { return; }
+    var args = e.data.args || {};
+    allowed = {};
+    (args.keys || []).forEach(function (k) { allowed[k] = true; });
+    var nonce = args.copyNonce || 0;
+    if (nonce && nonce !== lastCopy && args.copyText) {
+      lastCopy = nonce;
+      var text = String(args.copyText);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(function () {});
+      }
+    }
+  });
+
+  var repeatable = { Backspace: 1, Delete: 1, ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1 };
+
+  function onKeyDown(e) {
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) { return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z") && !e.altKey) {
+      e.preventDefault();
+      sendKey("Undo");
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) { return; }
+    if (!allowed[e.key]) { return; }
+    if (e.repeat && !repeatable[e.key]) { e.preventDefault(); return; }
+    e.preventDefault();
+    sendKey(e.key);
+  }
+
+  function onClick(e) {
+    var node = e.target && e.target.closest ? e.target.closest("[data-path]") : null;
+    if (!node || !node.closest(".px-math")) { return; }
+    e.preventDefault();
+    sendEvent({ key: "click", path: node.getAttribute("data-path") || "", at: node.getAttribute("data-at") || "0" });
+  }
+
+  function sendKey(key) {
+    sendEvent({ key: key });
+  }
+
+  function sendEvent(extra) {
+    try {
+      var active = window.parent.document.activeElement;
+      if (active && active.tagName === "BUTTON") { active.blur(); }
+    } catch (err) {}
+    counter = (counter + 1) % 1000;
+    var item = { seq: Date.now() * 1000 + counter };
+    for (var k in extra) { item[k] = extra[k]; }
+    events.push(item);
+    if (events.length > 64) { events.shift(); }
+    post("streamlit:setComponentValue", { value: events.slice(), dataType: "json" });
+  }
+
+  var host = window;
+  try { host = window.parent; void host.document; } catch (err) { host = window; }
+  if (host.__pxKeyHandler) {
+    host.document.removeEventListener("keydown", host.__pxKeyHandler, true);
+  }
+  host.__pxKeyHandler = onKeyDown;
+  host.document.addEventListener("keydown", onKeyDown, true);
+  if (host.__pxClickHandler) {
+    host.document.removeEventListener("click", host.__pxClickHandler, true);
+  }
+  host.__pxClickHandler = onClick;
+  host.document.addEventListener("click", onClick, true);
+  post("streamlit:componentReady", { apiVersion: 1 });
+  post("streamlit:setFrameHeight", { height: 0 });
+})();
+</script>
+</body>
+</html>
